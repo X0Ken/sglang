@@ -223,6 +223,19 @@ class TestQwen3Detector(CustomTestCase):
 
 
 class TestDeepSeekV4Detector(CustomTestCase):
+    def test_tool_call_implicitly_ends_streamed_thinking_across_chunks(self):
+        detector = DeepSeekV4Detector(force_reasoning=True)
+        chunks = [
+            "reasoning<｜DS",
+            "ML｜tool_calls><｜DSML｜invoke name=\"x\"/>",
+        ]
+        results = [detector.parse_streaming_increment(chunk) for chunk in chunks]
+        self.assertEqual("".join(result.reasoning_text for result in results), "reasoning")
+        self.assertEqual(
+            "".join(result.normal_text for result in results),
+            '<｜DSML｜tool_calls><｜DSML｜invoke name="x"/>',
+        )
+
     def test_strict_thinking_excludes_deepseek_control_tokens(self):
         detector = ReasoningParser(model_type="deepseek-v4").detector
         self.assertIsInstance(detector, DeepSeekV4Detector)

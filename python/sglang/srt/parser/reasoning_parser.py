@@ -224,6 +224,27 @@ class BaseReasoningFormatDetector:
                 return StreamingParseResult(
                     normal_text=normal_text, reasoning_text=reasoning_text
                 )
+            if self.stream_reasoning and self.tool_start_token:
+                # Keep a suffix that may be the beginning of a tool marker. The
+                # marker can span decoded streaming chunks, so emitting such a
+                # suffix as reasoning would make the next chunk impossible to
+                # recognize as an implicit reasoning close.
+                max_prefix_len = min(
+                    len(current_text), len(self.tool_start_token) - 1
+                )
+                pending_len = next(
+                    (
+                        size
+                        for size in range(max_prefix_len, 0, -1)
+                        if self.tool_start_token.startswith(current_text[-size:])
+                    ),
+                    0,
+                )
+                if pending_len:
+                    self._buffer = current_text[-pending_len:]
+                    return StreamingParseResult(
+                        reasoning_text=current_text[:-pending_len]
+                    )
             if self.stream_reasoning:
                 # Stream the content immediately
                 self._buffer = ""
@@ -1116,6 +1137,7 @@ class DeepSeekV4Detector(BaseReasoningFormatDetector):
             dsv4_thinking_start_token,
             dsv4_thinking_end_token,
             think_excluded_tokens=[dsv4_eos_token, dsv4_dsml_token],
+            tool_start_token="<｜DSML｜tool_calls>",
             force_reasoning=force_reasoning,
             stream_reasoning=stream_reasoning,
             continue_final_message=continue_final_message,
