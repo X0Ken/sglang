@@ -458,6 +458,7 @@ class DSV4RawVerifyMetadata:
     extend_start_loc: Optional[torch.Tensor] = None
     verify_lens: Optional[torch.Tensor] = None
     total_verify_tokens: int = 0
+    use_prefill_cuda_graph: bool = False
 
     def copy_(self, other: DSV4RawVerifyMetadata):
         self.req_pool_indices.copy_(other.req_pool_indices)
@@ -473,6 +474,7 @@ class DSV4RawVerifyMetadata:
         self.extend_start_loc = other.extend_start_loc
         self.verify_lens = other.verify_lens
         self.total_verify_tokens = other.total_verify_tokens
+        self.use_prefill_cuda_graph = other.use_prefill_cuda_graph
 
 
 @dataclass
@@ -892,6 +894,7 @@ class DeepseekV4AttnBackend(
                 extend_start_loc=extend_start_loc,
                 verify_lens=verify_lens,
                 total_verify_tokens=total_verify_tokens,
+                use_prefill_cuda_graph=use_prefill_cuda_graph,
             )
         else:
             seq_lens_cpu_list = (
@@ -1048,7 +1051,7 @@ class DeepseekV4AttnBackend(
             extend_lens=extend_seq_lens,
             seq_lens_cpu=None,
             extend_lens_cpu=None,
-            use_prefill_cuda_graph=True,
+            use_prefill_cuda_graph=raw_metadata.use_prefill_cuda_graph,
             num_q_tokens=num_q_tokens,
             online_state_slot_offset=online_c128_state_slot_offset,
         )

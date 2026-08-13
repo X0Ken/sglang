@@ -213,6 +213,13 @@ def test_dsv4_ragged_metadata_uses_physical_verify_token_count():
     assert isinstance(num_tokens, ast.Name) and num_tokens.id == "num_q_tokens"
 
 
+def test_dsv4_raw_verify_preserves_eager_compressor_plan_mode():
+    source = DSV4_BACKEND_SOURCE.read_text()
+    assert "use_prefill_cuda_graph: bool = False" in source
+    assert "self.use_prefill_cuda_graph = other.use_prefill_cuda_graph" in source
+    assert "use_prefill_cuda_graph=raw_metadata.use_prefill_cuda_graph" in source
+
+
 def test_dsv4_compression_metadata_allows_fewer_cache_writes_than_verify_rows():
     """Exercise the production guard for a 6-row verify / 4-write boundary."""
     tree = ast.parse(DSV4_BACKEND_SOURCE.read_text())
