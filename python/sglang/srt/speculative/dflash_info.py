@@ -43,6 +43,7 @@ class DFlashVerifyInput(SpecInput):
     num_tokens_per_req: int = -1
 
     ragged_verify_layout: Optional[RaggedVerifyLayout] = None
+    disable_cuda_graph: bool = False
 
     def __post_init__(self):
         super().__init__(spec_input_type=SpecInputType.DFLASH_VERIFY)
@@ -77,7 +78,8 @@ class DFlashVerifyInput(SpecInput):
         )
 
         can_run_cuda_graph = bool(
-            target_worker.model_runner.decode_cuda_graph_runner
+            not self.disable_cuda_graph
+            and target_worker.model_runner.decode_cuda_graph_runner
             and target_worker.model_runner.decode_cuda_graph_runner.can_run_graph(
                 verify_forward_batch
             )

@@ -20,6 +20,7 @@ PLANNER_SOURCE = (
 CUDA_GRAPH_RUNNER_SOURCE = (
     ROOT / "python/sglang/srt/model_executor/runner/decode_cuda_graph_runner.py"
 )
+DFLASH_INFO_SOURCE = ROOT / "python/sglang/srt/speculative/dflash_info.py"
 
 
 def load_clamp_verify_lens():
@@ -148,6 +149,15 @@ def test_worker_uses_the_boundary_clamp_before_target_verify():
 def test_ragged_graph_replay_requires_an_exact_captured_token_tier():
     source = CUDA_GRAPH_RUNNER_SOURCE.read_text()
     assert "admission_tokens in self.capture_num_tokens" in source
+
+
+def test_boundary_clipping_explicitly_disables_cuda_graph_replay():
+    worker_source = (
+        ROOT / "python/sglang/srt/speculative/dspark_components/dspark_worker_v2.py"
+    ).read_text()
+    dflash_source = DFLASH_INFO_SOURCE.read_text()
+    assert "disable_cuda_graph=boundary_clipped" in worker_source
+    assert "not self.disable_cuda_graph" in dflash_source
 
 
 def test_valid_layout_positions_never_cross_context_boundary():

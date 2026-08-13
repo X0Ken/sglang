@@ -764,8 +764,9 @@ class DSparkWorkerV2(BaseSpecWorker):
                     draft_tokens=draft_tokens,
                     bs=bs,
                     device=device,
-                    sampling_info=sampling_info,
-                    inject_gate=fold_eligible,
+                sampling_info=sampling_info,
+                inject_gate=fold_eligible,
+                disable_cuda_graph=boundary_clipped,
                 )
             else:
                 target_verify = self._verify_executor.run_non_compact(
