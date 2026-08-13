@@ -705,7 +705,6 @@ class DeepseekV4AttnBackend(
             max_seq_len=max_seq_len,
             out_loc=out_cache_loc,
             need_compress=True,
-            num_tokens=num_q_tokens,
         )
 
         indexer_metadata = self.init_forward_metadata_indexer(core_attn_metadata)
@@ -1030,6 +1029,7 @@ class DeepseekV4AttnBackend(
             max_seq_len=self.MAX_SEQ_LEN_FOR_CAPTURE,
             out_loc=out_cache_loc,
             need_compress=True,
+            num_tokens=num_q_tokens,
         )
         indexer_metadata = self.init_forward_metadata_indexer(core_attn_metadata)
         create = functools.partial(
