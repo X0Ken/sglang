@@ -288,9 +288,15 @@ class DSV4AttnMetadata:
         # length; legacy paths use the metadata length.
         if num_tokens is None:
             num_tokens = self.seq_lens_casual.shape[0]
-        assert (
-            self.raw_out_loc.shape[0] == num_tokens
-        ), f"{self.raw_out_loc.shape=}, {num_tokens=}"
+        num_metadata_rows = self.seq_lens_casual.shape[0]
+        num_write_tokens = self.raw_out_loc.shape[0]
+        # Ragged speculative verify can keep a full physical attention window
+        # while only a prefix has legal cache-write locations at a generation
+        # or context boundary.  The metadata kernel masks rows beyond
+        # num_write_tokens, just as it does for CP-v2 padding.
+        assert 0 <= num_write_tokens <= num_tokens <= num_metadata_rows, (
+            f"{num_write_tokens=}, {num_tokens=}, {num_metadata_rows=}"
+        )
 
         (
             self.c4_out_loc,

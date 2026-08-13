@@ -187,6 +187,52 @@ def test_dsv4_ragged_metadata_uses_physical_verify_token_count():
     assert isinstance(num_tokens, ast.Name) and num_tokens.id == "num_q_tokens"
 
 
+def test_dsv4_compression_metadata_allows_fewer_cache_writes_than_verify_rows():
+    """Exercise the production guard for a 6-row verify / 4-write boundary."""
+    tree = ast.parse(DSV4_BACKEND_SOURCE.read_text())
+    class_node = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "DSV4AttnMetadata"
+    )
+    method = next(
+        node
+        for node in class_node.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "init_compression_metadata"
+    )
+    seen = {}
+
+    def fake_kernel(seq_lens, positions, raw_out_loc, page_table, page_size, **_):
+        seen["shapes"] = (len(seq_lens), len(positions), len(raw_out_loc))
+        writes = torch.zeros(len(raw_out_loc), dtype=torch.int64)
+        rows = torch.zeros(len(seq_lens), dtype=torch.int32)
+        pages = torch.zeros((len(seq_lens), 1), dtype=torch.int32)
+        return writes, rows, rows, rows, writes, rows, rows, rows, pages
+
+    namespace = {
+        "Optional": __import__("typing").Optional,
+        "_init_compression_metadata_triton": fake_kernel,
+        "_pad_last_dim": lambda value: value,
+    }
+    exec(
+        compile(ast.Module(body=[method], type_ignores=[]), str(DSV4_BACKEND_SOURCE), "exec"),
+        namespace,
+    )
+    metadata = SimpleNamespace(
+        page_table=torch.zeros((6, 1), dtype=torch.int32),
+        seq_lens_casual=torch.arange(6, dtype=torch.int32),
+        positions_casual=torch.arange(6, dtype=torch.int32),
+        raw_out_loc=torch.arange(4, dtype=torch.int64),
+        page_size=256,
+        swa_page_indices=torch.zeros((6, 1), dtype=torch.int32),
+    )
+    namespace["init_compression_metadata"](metadata, num_tokens=6)
+    assert seen["shapes"] == (6, 6, 4)
+    assert metadata.c4_out_loc.shape == (4,)
+    assert metadata.c128_out_loc.shape == (4,)
+
+
 def test_valid_layout_positions_never_cross_context_boundary():
     tree = ast.parse(SOURCE.read_text())
     offsets_node = next(
