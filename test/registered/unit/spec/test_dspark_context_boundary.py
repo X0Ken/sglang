@@ -191,7 +191,7 @@ def test_cuda_graph_runner_honors_speculative_eager_override():
 
 def test_dsv4_ragged_metadata_uses_physical_verify_token_count():
     source = DSV4_BACKEND_SOURCE.read_text()
-    assert "total_verify_tokens = int(out_cache_loc.shape[0])" in source
+    assert "total_verify_tokens = ragged_layout.total_verify_tokens" in source
     tree = ast.parse(source)
     method = next(
         node
