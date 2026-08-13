@@ -30,6 +30,7 @@ from sglang.srt.managers.io_struct import (  # noqa: E402
 )
 from sglang.srt.managers.tokenizer_manager import (  # noqa: E402
     ReqState,
+    RequestLifecycle,
     TokenizerManager,
 )
 from sglang.srt.observability.req_time_stats import (  # noqa: E402
@@ -129,6 +130,7 @@ def _make_tokenizer_manager() -> TokenizerManager:
     tm.dump_requests_folder = ""
     tm.crash_dump_folder = ""
     tm.send_to_scheduler = MagicMock()
+    tm._dispatch_to_scheduler = Mock()
     return tm
 
 
@@ -147,6 +149,85 @@ def _make_req_state(rid: str = "test_rid") -> ReqState:
         obj=obj,
         time_stats=APIServerReqTimeStats(),
     )
+
+
+class TestRequestLifecycleCleanup(CustomTestCase):
+    """Regression coverage for client-disconnect cleanup."""
+
+    def test_dispatched_request_is_aborted_before_state_is_removed(self):
+        tm = _make_tokenizer_manager()
+        lifecycle = RequestLifecycle()
+        state = _make_req_state("active-rid")
+        state.lifecycle = lifecycle
+        state.dispatched = True
+        lifecycle.scheduler_rids.add("active-rid")
+        tm.rid_to_state["active-rid"] = state
+
+        observed_state = []
+
+        def record_abort(req):
+            observed_state.append((req, "active-rid" in tm.rid_to_state))
+
+        tm._dispatch_to_scheduler.side_effect = record_abort
+        tm._close_request_lifecycle(lifecycle)
+
+        self.assertEqual(len(observed_state), 1)
+        self.assertEqual(observed_state[0][0].rid, "active-rid")
+        self.assertTrue(observed_state[0][1])
+        self.assertNotIn("active-rid", tm.rid_to_state)
+
+    def test_undispatched_request_is_only_removed(self):
+        tm = _make_tokenizer_manager()
+        lifecycle = RequestLifecycle()
+        state = _make_req_state("not-dispatched")
+        state.lifecycle = lifecycle
+        tm.rid_to_state["not-dispatched"] = state
+
+        tm._close_request_lifecycle(lifecycle)
+
+        tm._dispatch_to_scheduler.assert_not_called()
+        self.assertNotIn("not-dispatched", tm.rid_to_state)
+
+    def test_cleanup_is_idempotent(self):
+        tm = _make_tokenizer_manager()
+        lifecycle = RequestLifecycle()
+        state = _make_req_state("active-rid")
+        state.lifecycle = lifecycle
+        state.dispatched = True
+        tm.rid_to_state["active-rid"] = state
+
+        tm._close_request_lifecycle(lifecycle)
+        tm._close_request_lifecycle(lifecycle)
+
+        self.assertEqual(tm._dispatch_to_scheduler.call_count, 1)
+
+    def test_stale_cleanup_does_not_abort_reused_rid(self):
+        tm = _make_tokenizer_manager()
+        old_lifecycle = RequestLifecycle()
+        new_lifecycle = RequestLifecycle()
+        replacement = _make_req_state("reused-rid")
+        replacement.lifecycle = new_lifecycle
+        replacement.dispatched = True
+        tm.rid_to_state["reused-rid"] = replacement
+        old_lifecycle.scheduler_rids.add("reused-rid")
+
+        tm._close_request_lifecycle(old_lifecycle)
+
+        tm._dispatch_to_scheduler.assert_not_called()
+        self.assertIs(tm.rid_to_state["reused-rid"], replacement)
+
+    def test_stream_background_cleanup_has_no_fixed_delay(self):
+        tm = _make_tokenizer_manager()
+        obj = GenerateReqInput(text="hello", rid="stream-rid")
+        obj.normalize_batch_and_arguments()
+        lifecycle = tm._init_req_state(obj)
+        state = tm.rid_to_state[obj.rid]
+        state.dispatched = True
+
+        asyncio.run(tm.create_abort_task(obj)())
+
+        tm._dispatch_to_scheduler.assert_called_once()
+        self.assertTrue(lifecycle.closed)
 
 
 def _make_abort_req(rid: str, abort_message: str = "Aborted") -> AbortReq:

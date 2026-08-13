@@ -198,6 +198,20 @@ _INCREMENTAL_STREAMING_META_INFO_KEYS = (
 
 
 @dataclasses.dataclass
+class RequestLifecycle:
+    """Request-local ownership of scheduler requests.
+
+    The identity token prevents delayed streaming cleanup from aborting a newer
+    request that happens to reuse the same RID.  ``scheduler_rids`` contains
+    only requests that were successfully dispatched.
+    """
+
+    identity: object = dataclasses.field(default_factory=object)
+    scheduler_rids: set[str] = dataclasses.field(default_factory=set)
+    closed: bool = False
+
+
+@dataclasses.dataclass
 class ReqState:
     """Store the state a request."""
 
@@ -208,6 +222,9 @@ class ReqState:
 
     # For performance metrics
     time_stats: APIServerReqTimeStats
+    lifecycle: Optional[RequestLifecycle] = None
+    dispatched: bool = False
+    abort_requested: bool = False
     last_completion_tokens: int = 1
     ttft_observed: bool = False
 
@@ -783,7 +800,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                     f"routed_dp_rank={obj.routed_dp_rank} out of range [0, {dp_size})"
                 )
 
-        self._init_req_state(obj, request)
+        lifecycle = self._init_req_state(obj, request)
         try:
             if self.server_args.language_only:
                 self._handle_epd_disaggregation_encode_request(obj)
@@ -817,7 +834,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             # request -- would otherwise leak those entries forever. Drop any that
             # are still pending; entries already removed on the normal completion
             # path are left untouched (pop is a no-op).
-            self._discard_pending_req_states(obj)
+            self._close_request_lifecycle(lifecycle)
             raise
 
     def _detect_input_format(
@@ -1566,6 +1583,10 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             tokenized_obj.wrap_pickle_fields()
             self._dispatch_to_scheduler(tokenized_obj)
             dispatched = True
+            state = self.rid_to_state.get(tokenized_obj.rid)
+            if state is not None and state.lifecycle is not None:
+                state.dispatched = True
+                state.lifecycle.scheduler_rids.add(tokenized_obj.rid)
             tokenized_obj.time_stats = time_stats
             tokenized_obj.time_stats.set_api_server_dispatch_finish_time()
         finally:
@@ -1598,6 +1619,11 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
 
             self._dispatch_to_scheduler(batch_req)
             dispatched = True
+            for tokenized_obj in tokenized_objs:
+                state = self.rid_to_state.get(tokenized_obj.rid)
+                if state is not None and state.lifecycle is not None:
+                    state.dispatched = True
+                    state.lifecycle.scheduler_rids.add(tokenized_obj.rid)
             for tokenized_obj, time_stat in zip(tokenized_objs, time_stats):
                 tokenized_obj.time_stats = time_stat
             set_time_batch(tokenized_objs, "set_api_server_dispatch_finish_time")
@@ -1851,6 +1877,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
 
             # Cache the common prefix for parallel sampling
             for i in range(batch_size):
+                parent_state = self.rid_to_state[objs[i].rid]
                 tmp_obj = copy.copy(objs[i])
                 tokenized_obj = copy.copy(tokenized_objs[i])
                 # Ensure independent mm_items so wrap_shm_features won't mutate the original
@@ -1863,7 +1890,7 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                 tokenized_obj.sampling_params = copy.copy(tokenized_obj.sampling_params)
                 tokenized_obj.sampling_params.max_new_tokens = 0
                 tokenized_obj.stream = False
-                self._init_req_state(tmp_obj)
+                self._init_req_state(tmp_obj, lifecycle=parent_state.lifecycle)
                 self._send_one_request(tokenized_obj)
                 await self._wait_one_response(tmp_obj, request).__anext__()
 
@@ -1879,7 +1906,8 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
                             copy.copy(item) for item in tokenized_obj.mm_inputs.mm_items
                         ]
                     tokenized_obj.rid = tmp_obj.regenerate_rid()
-                    self._init_req_state(tmp_obj)
+                    parent_state = self.rid_to_state[objs[i].rid]
+                    self._init_req_state(tmp_obj, lifecycle=parent_state.lifecycle)
                     state = self.rid_to_state[tmp_obj.rid]
                     tokenized_obj.time_stats = state.time_stats
                     if tmp_obj.return_prompt_token_ids:
@@ -1955,6 +1983,13 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             and rid not in self.rid_to_state
         ):
             return
+        if abort_all:
+            for state in self.rid_to_state.values():
+                state.abort_requested = True
+        else:
+            for state_rid, state in self.rid_to_state.items():
+                if state_rid.startswith(rid):
+                    state.abort_requested = True
         req = AbortReq(rid=rid, abort_all=abort_all)
         self._dispatch_to_scheduler(req)
         if self.enable_metrics:
@@ -2126,12 +2161,9 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
     def create_abort_task(self, obj: GenerateReqInput):
         # Abort the request if the client is disconnected.
         async def abort_request():
-            await asyncio.sleep(2)
-            if obj.is_single:
-                self.abort_request(obj.rid)
-            else:
-                for rid in obj.rid:
-                    self.abort_request(rid)
+            lifecycle = getattr(obj, "_request_lifecycle", None)
+            if lifecycle is not None:
+                self._close_request_lifecycle(lifecycle)
 
         background_tasks = BackgroundTasks()
         background_tasks.add_task(abort_request)
@@ -3339,7 +3371,12 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         self,
         obj: Union[GenerateReqInput, EmbeddingReqInput],
         request: Optional[fastapi.Request] = None,
+        lifecycle: Optional[RequestLifecycle] = None,
     ):
+        if lifecycle is None:
+            lifecycle = RequestLifecycle()
+        if isinstance(obj, GenerateReqInput):
+            obj._request_lifecycle = lifecycle
         created_time = obj.received_time
 
         external_trace_header = None
@@ -3374,23 +3411,63 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
             if rid in self.rid_to_state:
                 raise ValueError(f"Duplicate request ID detected: {rid}")
             time_stats = APIServerReqTimeStats(disagg_mode=self.disaggregation_mode)
-            state = ReqState([], False, asyncio.Event(), sub_obj, time_stats)
+            state = ReqState(
+                [],
+                False,
+                asyncio.Event(),
+                sub_obj,
+                time_stats,
+                lifecycle=lifecycle,
+            )
             self.rid_to_state[rid] = state
             if self.enable_trace:
                 time_stats.init_trace_ctx(rid, bootstrap_room, external_trace_header)
             time_stats.set_created_time(created_time)
+        return lifecycle
+
+    def _close_request_lifecycle(self, lifecycle: RequestLifecycle):
+        """Abort dispatched work owned by *lifecycle*, then remove its state.
+
+        This method is intentionally synchronous and idempotent so generator
+        cancellation and the StreamingResponse background callback can race
+        without sending duplicate aborts.
+        """
+        if lifecycle.closed:
+            return
+        lifecycle.closed = True
+
+        owned_rids = [
+            rid
+            for rid, state in self.rid_to_state.items()
+            if state.lifecycle is lifecycle
+        ]
+        for rid in owned_rids:
+            state = self.rid_to_state.get(rid)
+            if state is None or state.lifecycle is not lifecycle:
+                continue
+            if state.dispatched and not state.finished and not state.abort_requested:
+                state.abort_requested = True
+                # Dispatch directly. abort_request() deliberately ignores RIDs
+                # absent from rid_to_state, while lifecycle cleanup must order the
+                # scheduler abort before local state removal.
+                self._dispatch_to_scheduler(AbortReq(rid=rid, abort_all=False))
+                if self.enable_metrics:
+                    self.metrics_collector.observe_one_aborted_request(
+                        self.metrics_collector.labels
+                    )
+            self.rid_to_state.pop(rid, None)
 
     def _discard_pending_req_states(self, obj):
-        """Drop rid_to_state entries created by _init_req_state for *obj*.
+        """Drop local state for work that is known not to have been dispatched.
 
-        Safe to call after a partial/failed dispatch: only entries still present
-        are removed, and the scheduler-response path looks up state with
-        ``.get(...)`` so a later output for a discarded rid is ignored, not fatal.
+        Kept for callers that fail during request initialization.  Once work may
+        have reached the scheduler, use ``_close_request_lifecycle`` instead.
         """
-        if not hasattr(obj, "is_single") or obj.is_single:
-            rids = [obj.rid]
-        else:
-            rids = obj.rid
+        rids = (
+            [obj.rid]
+            if not hasattr(obj, "is_single") or obj.is_single
+            else obj.rid
+        )
         for rid in rids:
             self.rid_to_state.pop(rid, None)
 
