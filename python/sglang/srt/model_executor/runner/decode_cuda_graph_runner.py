@@ -660,9 +660,15 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
             return False
 
         admission_tokens = ragged_layout.graph_num_tokens
-        is_tokens_supported = admission_tokens <= self.capture_num_tokens[
-            -1
-        ] and forward_batch.batch_size <= self._ragged_capture_slots(admission_tokens)
+        # A ragged graph exists only for the exact tiers captured at startup.
+        # Boundary clipping can produce fewer tokens than the smallest tier;
+        # admitting such a layout by max-size alone would copy (for example)
+        # four compact tokens into a six-token capture buffer.
+        is_tokens_supported = (
+            admission_tokens in self.capture_num_tokens
+            and forward_batch.batch_size
+            <= self._ragged_capture_slots(admission_tokens)
+        )
 
         is_dp_supported = (
             forward_batch.can_run_dp_cuda_graph if self.require_mlp_sync else True

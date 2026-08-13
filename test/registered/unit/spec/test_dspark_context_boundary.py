@@ -17,6 +17,9 @@ SOURCE = ROOT / "python/sglang/srt/speculative/draft_worker_common.py"
 PLANNER_SOURCE = (
     ROOT / "python/sglang/srt/speculative/dspark_components/dspark_planner.py"
 )
+CUDA_GRAPH_RUNNER_SOURCE = (
+    ROOT / "python/sglang/srt/model_executor/runner/decode_cuda_graph_runner.py"
+)
 
 
 def load_clamp_verify_lens():
@@ -139,6 +142,11 @@ def test_worker_uses_the_boundary_clamp_before_target_verify():
     assert "clamp_verify_lens(" in source
     assert "verify_lens=actual_verify_lens" in source
     assert "graph_num_tokens = int(actual_verify_lens.sum().item())" in source
+
+
+def test_ragged_graph_replay_requires_an_exact_captured_token_tier():
+    source = CUDA_GRAPH_RUNNER_SOURCE.read_text()
+    assert "admission_tokens in self.capture_num_tokens" in source
 
 
 def test_valid_layout_positions_never_cross_context_boundary():
