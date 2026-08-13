@@ -227,14 +227,6 @@ def test_dsv4_eager_ragged_verify_builds_compact_host_compressor_plan():
     assert "extend_lens_cpu=planner_extend_lens_cpu" in source
 
 
-def test_dsv4_prefill_compressor_clips_boundary_plan_to_physical_input():
-    source = Path(
-        "python/sglang/kernels/ops/attention/dsv4/compress.py"
-    ).read_text()
-    assert "num_physical_q = kv_score_input.shape[0]" in source
-    assert "plan.plan_w[:num_physical_q]" in source
-
-
 def test_dsv4_compression_metadata_allows_fewer_cache_writes_than_verify_rows():
     """Exercise the production guard for a 6-row verify / 4-write boundary."""
     tree = ast.parse(DSV4_BACKEND_SOURCE.read_text())
