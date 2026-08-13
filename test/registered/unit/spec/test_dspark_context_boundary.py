@@ -229,7 +229,7 @@ def test_dsv4_eager_ragged_verify_builds_compact_host_compressor_plan():
 
 def test_dsv4_prefill_compressor_clips_boundary_plan_to_physical_input():
     source = Path(
-        "python/sglang/kernels/ops/attention/dsv4/compress.py"
+        "python/sglang/srt/layers/attention/dsv4/compressor_v2.py"
     ).read_text()
     assert "num_physical_q = kv_score_input.shape[0]" in source
     assert "plan.plan_w[:num_physical_q]" in source
