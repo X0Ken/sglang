@@ -863,7 +863,11 @@ class DeepseekV4AttnBackend(
                 extend_seq_lens = self.extend_seq_lens_buffer[:bs]
                 extend_start_loc = self.extend_start_loc_buffer[:bs]
                 verify_lens = self.extend_seq_lens_buffer[:bs]
-                total_verify_tokens = ragged_layout.graph_num_tokens
+                # graph_num_tokens is the CUDA-graph admission/padding tier and
+                # may exceed the physically compacted verify window near a
+                # context or generation boundary. Compression metadata must be
+                # sized from the actual output/cache locations.
+                total_verify_tokens = int(out_cache_loc.shape[0])
 
             return DSV4RawVerifyMetadata(
                 req_pool_indices=req_pool_indices,
