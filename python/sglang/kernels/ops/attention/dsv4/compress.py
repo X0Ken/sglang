@@ -388,6 +388,21 @@ def compress_forward(
     out: Optional[torch.Tensor] = None,
     is_online: bool = False,
 ) -> torch.Tensor:
+    if not plan.is_decode:
+        # A generation-boundary DSpark verify can reserve one more logical
+        # verify row (the root token) than the indexer physically materializes.
+        # Eager host prefill plans are ordered by ragged_id, so entries beyond
+        # the physical input are necessarily the clipped tail and must not be
+        # handed to the C4/C128 write kernels. CUDA-graph plans have input and
+        # plan tensors padded to the same captured size and are unchanged.
+        num_physical_q = kv_score_input.shape[0]
+        if plan.plan_c.shape[0] > num_physical_q or plan.plan_w.shape[0] > num_physical_q:
+            plan = CompressorPrefillPlan(
+                plan.compress_ratio,
+                plan.plan_c[:num_physical_q],
+                plan.plan_w[:num_physical_q],
+                plan.pin_buffer,
+            )
     if out is None:
         num_q_tokens = plan[1].shape[0]  # NOTE: decode = bs, prefill = dynamic
         out = kv_score_input.new_empty((num_q_tokens, head_dim))

@@ -165,23 +165,6 @@ class CompressorBackendMixin:
             assert head_dim == 128
 
         plan = self._get_paged_compress_metadata(compress_ratio)
-        # A generation-boundary DSpark verify can reserve one more logical
-        # verify row (the root token) than the indexer physically materializes.
-        # Eager host prefill plans are ordered by ragged_id, so entries beyond
-        # the physical input are the clipped tail. Trim once here so both the
-        # compress and norm/rope/store stages consume the same plan.
-        if not plan.is_decode:
-            num_physical_q = kv_score_input.shape[0]
-            if (
-                plan.plan_c.shape[0] > num_physical_q
-                or plan.plan_w.shape[0] > num_physical_q
-            ):
-                plan = CompressorPrefillPlan(
-                    plan.compress_ratio,
-                    plan.plan_c[:num_physical_q],
-                    plan.plan_w[:num_physical_q],
-                    plan.pin_buffer,
-                )
         is_online = _use_online_compress(compress_ratio)
         if is_online:
             kv_score_buffer = kv_score_buffer.view(-1, 1, head_dim * 3)
