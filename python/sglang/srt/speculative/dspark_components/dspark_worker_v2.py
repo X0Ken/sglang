@@ -713,11 +713,14 @@ class DSparkWorkerV2(BaseSpecWorker):
             planned_verify_lens.to(torch.int64), actual_verify_lens
         )
         if not torch.equal(actual_verify_lens, planned_verify_lens):
-            graph_num_tokens = (
-                int(actual_verify_lens.sum().item())
-                if layout is None
-                else layout.graph_num_tokens
-            )
+            # A clipped compact window no longer fills the originally selected
+            # CUDA graph tier.  Keeping the old graph_num_tokens makes
+            # load_batch copy the compact input (sum(actual_verify_lens)) into a
+            # larger captured input buffer.  Use the real token count so graph
+            # selection falls back to eager unless that exact tier was captured.
+            # Boundary requests are rare, and correctness is preferable to
+            # padding them with synthetic verify tokens.
+            graph_num_tokens = int(actual_verify_lens.sum().item())
             layout = RaggedVerifyLayout.from_verify_lens_device(
                 verify_lens=actual_verify_lens,
                 graph_num_tokens=graph_num_tokens,
