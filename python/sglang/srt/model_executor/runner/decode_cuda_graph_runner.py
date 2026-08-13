@@ -585,6 +585,14 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         if forward_batch.replace_embeds is not None:
             return False
 
+        # Speculative planners may explicitly force an eager verify for a
+        # boundary-clipped window.  Honor that decision here as well as in the
+        # initial prepare_for_verify admission; model_runner asks this method a
+        # second time immediately before execution.
+        spec_info = forward_batch.spec_info
+        if spec_info is not None and getattr(spec_info, "disable_cuda_graph", False):
+            return False
+
         ragged_layout = (
             resolve_ragged_verify_layout(forward_batch)
             if self.ragged_verify_mode
@@ -598,7 +606,6 @@ class DecodeCudaGraphRunner(BaseCudaGraphRunner):
         # Uniform-width replay invariant: the batch's actual per-request width
         # must match this runner's capture width; anything else falls back to
         # eager. (Unset widths pass: not every path fills the field yet.)
-        spec_info = forward_batch.spec_info
         if (
             spec_info is not None
             and spec_info.num_tokens_per_req > 0

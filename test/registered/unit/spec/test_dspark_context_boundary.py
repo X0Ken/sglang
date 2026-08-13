@@ -163,6 +163,32 @@ def test_boundary_clipping_explicitly_disables_cuda_graph_replay():
     assert "not self.disable_cuda_graph" in dflash_source
 
 
+def test_cuda_graph_runner_honors_speculative_eager_override():
+    source = CUDA_GRAPH_RUNNER_SOURCE.read_text()
+    tree = ast.parse(source)
+    class_node = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "DecodeCudaGraphRunner"
+    )
+    method = next(
+        node
+        for node in class_node.body
+        if isinstance(node, ast.FunctionDef) and node.name == "can_run_graph"
+    )
+    runner = SimpleNamespace()
+    forward_batch = SimpleNamespace(
+        replace_embeds=None,
+        spec_info=SimpleNamespace(disable_cuda_graph=True),
+    )
+    namespace = {"ForwardBatch": object}
+    exec(
+        compile(ast.Module(body=[method], type_ignores=[]), str(CUDA_GRAPH_RUNNER_SOURCE), "exec"),
+        namespace,
+    )
+    assert namespace["can_run_graph"](runner, forward_batch) is False
+
+
 def test_dsv4_ragged_metadata_uses_physical_verify_token_count():
     source = DSV4_BACKEND_SOURCE.read_text()
     assert "total_verify_tokens = int(out_cache_loc.shape[0])" in source
