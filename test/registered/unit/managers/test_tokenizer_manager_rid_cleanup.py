@@ -230,6 +230,47 @@ class TestRequestLifecycleCleanup(CustomTestCase):
         self.assertTrue(lifecycle.closed)
 
 
+class TestDefaultGenerationLimits(CustomTestCase):
+    def test_omitted_limits_use_server_defaults(self):
+        tm = _make_tokenizer_manager()
+        tm.default_max_new_tokens = 16384
+        tm.default_max_thinking_tokens = 8192
+
+        params = tm._apply_default_generation_limits(
+            {"max_new_tokens": None, "custom_params": None}
+        )
+
+        self.assertEqual(params["max_new_tokens"], 16384)
+        self.assertEqual(params["custom_params"]["thinking_budget"], 8192)
+
+    def test_request_limits_override_server_defaults(self):
+        tm = _make_tokenizer_manager()
+        tm.default_max_new_tokens = 16384
+        tm.default_max_thinking_tokens = 8192
+
+        params = tm._apply_default_generation_limits(
+            {
+                "max_new_tokens": 4096,
+                "custom_params": {"thinking_budget": 2048},
+            }
+        )
+
+        self.assertEqual(params["max_new_tokens"], 4096)
+        self.assertEqual(params["custom_params"]["thinking_budget"], 2048)
+
+    def test_defaults_do_not_mutate_request_dictionary(self):
+        tm = _make_tokenizer_manager()
+        tm.default_max_new_tokens = 16384
+        tm.default_max_thinking_tokens = 8192
+        original = {"max_new_tokens": None, "custom_params": {"foo": "bar"}}
+
+        params = tm._apply_default_generation_limits(original)
+
+        self.assertIsNone(original["max_new_tokens"])
+        self.assertNotIn("thinking_budget", original["custom_params"])
+        self.assertEqual(params["custom_params"]["foo"], "bar")
+
+
 def _make_abort_req(rid: str, abort_message: str = "Aborted") -> AbortReq:
     """Create an AbortReq for testing."""
     return AbortReq(

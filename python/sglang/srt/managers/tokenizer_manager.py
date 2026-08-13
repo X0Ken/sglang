@@ -423,6 +423,8 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         self.allow_auto_truncate = server_args.allow_auto_truncate
         self.skip_tokenizer_init = server_args.skip_tokenizer_init
         self.preferred_sampling_params = server_args.preferred_sampling_params
+        self.default_max_thinking_tokens = server_args.default_max_thinking_tokens
+        self.default_max_new_tokens = server_args.default_max_new_tokens
         self.crash_dump_folder = server_args.crash_dump_folder
         set_global_server_args_for_tokenizer(server_args)
 
@@ -1360,7 +1362,9 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         if self.preferred_sampling_params:
             sampling_kwargs = {**self.preferred_sampling_params, **obj.sampling_params}
         else:
-            sampling_kwargs = obj.sampling_params
+            sampling_kwargs = dict(obj.sampling_params)
+        if isinstance(obj, GenerateReqInput):
+            sampling_kwargs = self._apply_default_generation_limits(sampling_kwargs)
         if isinstance(obj, GenerateReqInput) and obj.max_thinking_tokens is not None:
             sampling_kwargs = dict(sampling_kwargs)
             custom_params = dict(sampling_kwargs.get("custom_params") or {})
@@ -1456,6 +1460,33 @@ class TokenizerManager(TokenizerControlMixin, TokenizerManagerScoreMixin):
         self.rid_to_state[obj.rid].time_stats.set_tokenize_finish_time()
 
         return tokenized_obj
+
+    def _apply_default_generation_limits(self, sampling_kwargs: Dict[str, Any]):
+        """Apply server generation limits only when the request omitted them."""
+        sampling_kwargs = dict(sampling_kwargs)
+
+        default_max_new_tokens = getattr(self, "default_max_new_tokens", None)
+        if (
+            default_max_new_tokens is not None
+            and sampling_kwargs.get("max_new_tokens") is None
+        ):
+            sampling_kwargs["max_new_tokens"] = default_max_new_tokens
+
+        default_max_thinking_tokens = getattr(
+            self, "default_max_thinking_tokens", None
+        )
+        if default_max_thinking_tokens is not None:
+            custom_params = sampling_kwargs.get("custom_params")
+            if custom_params is None:
+                custom_params = {}
+            if isinstance(custom_params, dict):
+                custom_params = dict(custom_params)
+                custom_params.setdefault(
+                    "thinking_budget", default_max_thinking_tokens
+                )
+                sampling_kwargs["custom_params"] = custom_params
+
+        return sampling_kwargs
 
     @staticmethod
     def _resolve_embed_overrides(

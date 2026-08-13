@@ -111,6 +111,18 @@ class TestCompletionRequest(unittest.TestCase):
 
 
 class TestChatCompletionRequest(unittest.TestCase):
+    def test_zero_max_completion_tokens_is_preserved(self):
+        request = ChatCompletionRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "hello"}],
+            max_tokens=123,
+            max_completion_tokens=0,
+        )
+
+        params = request.to_sampling_params([], {}, None)
+
+        self.assertEqual(params["max_new_tokens"], 0)
+
     """Test ChatCompletionRequest protocol model"""
 
     def test_basic_chat_completion_request(self):

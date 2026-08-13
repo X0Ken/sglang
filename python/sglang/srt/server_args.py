@@ -1390,6 +1390,16 @@ class ServerArgs:
         "Enable strict token filtering during the thinking phase. Blocks model-specific excluded tokens (e.g., tool call markers) during reasoning. Requires a grammar backend that supports token filtering.",
         NS("serving"),
     ] = False
+    default_max_thinking_tokens: A[
+        Optional[int],
+        "Default maximum number of thinking tokens when the request does not provide custom_params.thinking_budget. Requires --enable-strict-thinking. A request-provided budget takes precedence.",
+        NS("serving"),
+    ] = None
+    default_max_new_tokens: A[
+        Optional[int],
+        "Default maximum number of generated tokens when the request does not provide max_tokens, max_completion_tokens, or max_new_tokens. A request-provided limit takes precedence.",
+        NS("serving"),
+    ] = None
     tool_call_parser: A[Optional[str], NS("serving")] = None
     tool_server: A[
         Optional[str],
@@ -8451,6 +8461,19 @@ class ServerArgs:
                             f"Invalid modality '{modality}' in --limit-mm-data-per-request."
                             f"Allowed modalities are: {list(allowed_modalities)}"
                         )
+
+        # Validate default generation limits
+        for name in ("default_max_thinking_tokens", "default_max_new_tokens"):
+            value = getattr(self, name)
+            if value is not None and value < 0:
+                raise ValueError(f"--{name.replace('_', '-')} must be non-negative")
+        if (
+            self.default_max_thinking_tokens is not None
+            and not self.enable_strict_thinking
+        ):
+            raise ValueError(
+                "--default-max-thinking-tokens requires --enable-strict-thinking"
+            )
 
         # Validate preferred_sampling_params
         if self.preferred_sampling_params:
