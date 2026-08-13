@@ -166,6 +166,7 @@ def test_boundary_clipping_explicitly_disables_cuda_graph_replay():
 def test_dsv4_ragged_metadata_uses_physical_verify_token_count():
     source = DSV4_BACKEND_SOURCE.read_text()
     assert "total_verify_tokens = int(out_cache_loc.shape[0])" in source
+    assert "num_tokens=num_q_tokens" in source
 
 
 def test_valid_layout_positions_never_cross_context_boundary():
