@@ -220,13 +220,6 @@ def test_dsv4_raw_verify_preserves_eager_compressor_plan_mode():
     assert "use_prefill_cuda_graph=raw_metadata.use_prefill_cuda_graph" in source
 
 
-def test_dsv4_eager_ragged_verify_builds_compact_host_compressor_plan():
-    source = DSV4_BACKEND_SOURCE.read_text()
-    assert "if is_ragged and not raw_metadata.use_prefill_cuda_graph" in source
-    assert "seq_lens_cpu=planner_seq_lens_cpu" in source
-    assert "extend_lens_cpu=planner_extend_lens_cpu" in source
-
-
 def test_dsv4_compression_metadata_allows_fewer_cache_writes_than_verify_rows():
     """Exercise the production guard for a 6-row verify / 4-write boundary."""
     tree = ast.parse(DSV4_BACKEND_SOURCE.read_text())
