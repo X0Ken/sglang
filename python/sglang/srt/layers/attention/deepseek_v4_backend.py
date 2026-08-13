@@ -1056,6 +1056,29 @@ class DeepseekV4AttnBackend(
             num_tokens=num_q_tokens,
         )
         indexer_metadata = self.init_forward_metadata_indexer(core_attn_metadata)
+
+        # The device planner always returns num_q_tokens entries so that its
+        # output is graph-shaped, including invalid padding entries.  That is
+        # required for CUDA graph replay, but it is not a valid eager c4 plan
+        # for a boundary-clipped ragged verify: the c4 input can contain fewer
+        # physical rows than the padded write-plan tensor.  Build a compact
+        # host plan from the already-available CPU lengths on the eager path.
+        # This also makes use_prefill_cuda_graph=False effective instead of
+        # merely forwarding the flag to a planner whose GPU path ignores it.
+        planner_seq_lens_cpu = None
+        planner_extend_lens_cpu = None
+        if is_ragged and not raw_metadata.use_prefill_cuda_graph:
+            planner_extend_lens_cpu = [int(x) for x in extend_seq_lens.tolist()]
+            if raw_metadata.seq_lens_cpu is not None:
+                planner_seq_lens_cpu = [
+                    int(seq_len) + extend_len
+                    for seq_len, extend_len in zip(
+                        raw_metadata.seq_lens_cpu, planner_extend_lens_cpu
+                    )
+                ]
+            else:
+                planner_seq_lens_cpu = [int(x) for x in seq_lens.tolist()]
+
         create = functools.partial(
             create_paged_compressor_data,
             is_prefill=True,
@@ -1064,8 +1087,8 @@ class DeepseekV4AttnBackend(
             req_pool_indices=req_pool_indices,
             seq_lens=seq_lens,
             extend_lens=extend_seq_lens,
-            seq_lens_cpu=None,
-            extend_lens_cpu=None,
+            seq_lens_cpu=planner_seq_lens_cpu,
+            extend_lens_cpu=planner_extend_lens_cpu,
             use_prefill_cuda_graph=raw_metadata.use_prefill_cuda_graph,
             num_q_tokens=num_q_tokens,
             online_state_slot_offset=online_c128_state_slot_offset,
