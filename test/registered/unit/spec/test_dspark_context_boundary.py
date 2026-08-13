@@ -141,6 +141,7 @@ def test_worker_uses_the_boundary_clamp_before_target_verify():
     ).read_text()
     assert "clamp_verify_lens(" in source
     assert "verify_lens=actual_verify_lens" in source
+    assert "boundary_clipped = not torch.equal(" in source
     assert "graph_num_tokens = int(actual_verify_lens.sum().item())" in source
 
 

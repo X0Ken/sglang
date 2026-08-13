@@ -624,6 +624,9 @@ class DSparkWorkerV2(BaseSpecWorker):
             remaining_generation_tokens=remaining_generation_tokens,
             max_position_embeddings=self.model_runner.req_to_token_pool.max_context_len,
         )
+        boundary_clipped = not torch.equal(
+            actual_verify_lens, requested_verify_lens
+        )
 
         if not bool(torch.all(actual_verify_lens > 0)):
             raise RuntimeError(
@@ -712,7 +715,9 @@ class DSparkWorkerV2(BaseSpecWorker):
         actual_verify_lens = torch.minimum(
             planned_verify_lens.to(torch.int64), actual_verify_lens
         )
-        if not torch.equal(actual_verify_lens, planned_verify_lens):
+        if boundary_clipped or not torch.equal(
+            actual_verify_lens, planned_verify_lens
+        ):
             # A clipped compact window no longer fills the originally selected
             # CUDA graph tier.  Keeping the old graph_num_tokens makes
             # load_batch copy the compact input (sum(actual_verify_lens)) into a
